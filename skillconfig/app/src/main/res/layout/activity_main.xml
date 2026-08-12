@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="20dp"
+    android:background="#121212">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ESP32 Provisioning"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="#00E5FF"
+            android:gravity="center"
+            android:layout_marginBottom="16dp"/>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Status: Scanning for device..."
+            android:textColor="#AAAAAA"
+            android:layout_marginBottom="12dp"/>
+
+        <!-- Wi-Fi Scan Button -->
+        <Button
+            android:id="@+id/scanWifiBtn"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Scan Nearby Wi-Fi Networks"
+            android:backgroundTint="#333333"
+            android:textColor="#FFFFFF"
+            android:enabled="false"
+            android:layout_marginBottom="8dp"/>
+
+        <!-- Wi-Fi Spinner Dropdown for Scanned Networks -->
+        <Spinner
+            android:id="@+id/wifiSpinner"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:background="#222222"
+            android:layout_marginBottom="12dp"/>
+
+        <!-- Wi-Fi SSID Input (Manual or auto-filled from dropdown) -->
+        <EditText
+            android:id="@+id/ssidInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Wi-Fi SSID (Type or select above)"
+            android:inputType="text"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#777777"
+            android:layout_marginBottom="12dp"/>
+
+        <!-- Wi-Fi Password Input -->
+        <EditText
+            android:id="@+id/wifiPassInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Wi-Fi Password"
+            android:inputType="textPassword"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#777777"
+            android:layout_marginBottom="12dp"/>
+
+        <!-- Cloudflare Worker Section -->
+        <EditText
+            android:id="@+id/workerUrlInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Cloudflare Worker URL"
+            android:inputType="textUri"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#777777"
+            android:layout_marginBottom="12dp"/>
+
+        <EditText
+            android:id="@+id/tokenInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Secret Token (X-Sensor-Token)"
+            android:inputType="textPassword"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#777777"
+            android:layout_marginBottom="12dp"/>
+
+        <!-- Schedule Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+            <EditText
+                android:id="@+id/intervalInput"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="Interval (Min)"
+                android:inputType="number"
+                android:text="60"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#777777"/>
+            <EditText
+                android:id="@+id/startHourInput"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="Quiet Start"
+                android:inputType="number"
+                android:text="20"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#777777"/>
+            <EditText
+                android:id="@+id/endHourInput"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:hint="Quiet End"
+                android:inputType="number"
+                android:text="8"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#777777"/>
+        </LinearLayout>
+
+        <!-- Antenna Selection Checkbox -->
+        <CheckBox
+            android:id="@+id/externalAntennaCheckbox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Use External Antenna (U.FL)"
+            android:textColor="#FFFFFF"
+            android:buttonTint="#00E5FF"
+            android:layout_marginBottom="16dp"/>
+
+        <Button
+            android:id="@+id/provisionBtn"
+            android:layout_width="match_parent"
+            android:layout_height="55dp"
+            android:text="Save &amp; Provision Device"
+            android:backgroundTint="#00C853"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:enabled="false"/>
+
+    </LinearLayout>
+</ScrollView>

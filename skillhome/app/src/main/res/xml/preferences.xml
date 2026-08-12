@@ -1,0 +1,47 @@
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <ListPreference
+        android:defaultValue="9600"
+        android:entries="@array/baud_rates"
+        android:entryValues="@array/baud_rates"
+        app:key="baud_rate"
+        app:title="Baud Rate" />
+
+    <EditTextPreference
+        android:defaultValue="Valid Distance:"
+        app:key="distance_prefix"
+        app:singleLine="true"
+        app:title="Distance Prefix" />
+
+    <EditTextPreference
+        android:defaultValue=" cm"
+        app:key="distance_suffix"
+        app:singleLine="true"
+        app:title="Distance Suffix" />
+
+    <EditTextPreference
+        android:defaultValue="5"
+        app:key="measurement_amount"
+        app:singleLine="true"
+        app:title="Amount of measures taken" />
+
+    <EditTextPreference
+        android:defaultValue="60"
+        app:key="sleep_interval"
+        app:singleLine="true"
+        app:title="Sleep Interval (Minutes)" />
+
+    <EditTextPreference
+        android:defaultValue="20"
+        app:key="quiet_start"
+        app:singleLine="true"
+        app:title="Quiet Hours Start (Hour 0-23)" />
+
+    <EditTextPreference
+        android:defaultValue="8"
+        app:key="quiet_end"
+        app:singleLine="true"
+        app:title="Quiet Hours End (Hour 0-23)" />
+
+</PreferenceScreen>
