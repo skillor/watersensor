@@ -5,16 +5,16 @@ export default {
     // Ensure database tables exist
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS readings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, 
-        distance INTEGER, 
-        battery REAL, 
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        distance INTEGER,
+        battery REAL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `).run();
 
     await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY, 
+        key TEXT PRIMARY KEY,
         value TEXT
       )
     `).run();
@@ -63,7 +63,7 @@ export default {
 
         // 2-year retention guardrail
         await env.DB.prepare(`
-          DELETE FROM readings 
+          DELETE FROM readings
           WHERE timestamp < datetime('now', '-2 years')
         `).run();
 
@@ -143,88 +143,117 @@ export default {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Water Tank Monitor</title>
+        <!-- Tailwind + DaisyUI -->
+        <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.2/dist/full.min.css" rel="stylesheet" type="text/css" />
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
       </head>
-      <body class="bg-gray-900 text-white font-sans p-6">
-        <div class="max-w-3xl mx-auto">
-          <div class="flex justify-between items-center mb-6">
-            <h1 class="text-3xl font-bold text-cyan-400">💧 Water Tank Monitor</h1>
-            ${isPublic ? '<span class="bg-blue-900 text-blue-300 text-xs px-3 py-1 rounded-full font-semibold border border-blue-700">Public Read-Only View</span>' : '<span class="bg-emerald-900 text-emerald-300 text-xs px-3 py-1 rounded-full font-semibold border border-emerald-700">Admin Panel</span>'}
+      <body class="bg-base-100 text-base-content font-sans p-4 md:p-6 min-h-screen">
+        <div class="max-w-4xl mx-auto space-y-6">
+
+          <!-- Header -->
+          <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div class="flex items-center gap-3">
+              <h1 class="text-3xl font-bold text-primary flex items-center gap-2">
+                💧 <span data-i18n="title">Water Tank Monitor</span>
+              </h1>
+              <button onclick="toggleLanguage()" id="langToggleBtn" class="btn btn-sm btn-outline btn-primary ml-2 rounded-full px-3">
+                🇩🇪 DE
+              </button>
+            </div>
+            ${isPublic
+              ? '<div class="badge badge-info badge-outline font-semibold" data-i18n="publicView">Public Read-Only View</div>'
+              : '<div class="badge badge-success badge-outline font-semibold" data-i18n="adminPanel">Admin Panel</div>'
+            }
           </div>
-          
+
           <!-- Latest Stat Cards -->
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700">
-              <p class="text-sm text-gray-400 mb-1">Calculated Value</p>
-              <p id="latestValCard" class="text-2xl font-extrabold text-cyan-300">Loading...</p>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="card bg-base-200 shadow-sm border border-base-300">
+              <div class="card-body p-5">
+                <p class="text-sm opacity-70 mb-1" data-i18n="calcValue">Calculated Value</p>
+                <p id="latestValCard" class="text-3xl font-extrabold text-primary" data-i18n="loading">Loading...</p>
+              </div>
             </div>
-            <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700">
-              <p class="text-sm text-gray-400 mb-1">Battery Level</p>
-              <p id="latestBatteryCard" class="text-2xl font-extrabold text-green-400">Loading...</p>
+            <div class="card bg-base-200 shadow-sm border border-base-300">
+              <div class="card-body p-5">
+                <p class="text-sm opacity-70 mb-1" data-i18n="batteryLevel">Battery Level</p>
+                <p id="latestBatteryCard" class="text-3xl font-extrabold text-success" data-i18n="loading">Loading...</p>
+              </div>
             </div>
-            <div class="bg-gray-800 p-5 rounded-xl shadow-lg border border-gray-700">
-              <p class="text-sm text-gray-400 mb-1">Prediction Status</p>
-              <p id="timeToFull" class="text-xl font-bold text-yellow-400">Calculating...</p>
+            <div class="card bg-base-200 shadow-sm border border-base-300">
+              <div class="card-body p-5">
+                <p class="text-sm opacity-70 mb-1" data-i18n="predictionStatus">Prediction Status</p>
+                <p id="timeToFull" class="text-2xl font-bold text-warning" data-i18n="calculating">Calculating...</p>
+              </div>
             </div>
           </div>
 
           <!-- Chart Card -->
-          <div class="bg-gray-800 p-6 rounded-xl shadow-lg mb-6 border border-gray-700">
-            <h2 class="text-lg font-medium text-gray-300 mb-4">Water Metric History & Trend</h2>
-            <div class="relative h-64 w-full">
-              <canvas id="waterChart"></canvas>
+          <div class="card bg-base-200 shadow-sm border border-base-300">
+            <div class="card-body p-5">
+              <h2 class="card-title text-lg mb-4" data-i18n="historyTrend">Water Metric History & Trend</h2>
+              <div class="relative h-64 w-full">
+                <canvas id="waterChart"></canvas>
+              </div>
             </div>
           </div>
 
           <!-- ADMIN SETTINGS PANEL -->
           ${!isPublic ? `
-          <div class="bg-gray-800 p-6 rounded-xl shadow-lg mb-6 border border-gray-700">
-            <h2 class="text-lg font-medium text-cyan-300 mb-4">⚙️ Settings & Formula</h2>
-            <form id="settingsForm" onsubmit="saveSettings(event)" class="space-y-4">
-              <div>
-                <label class="block text-sm text-gray-400 mb-1">Public Shareable Link</label>
-                <div class="flex gap-2">
-                  <input type="text" readonly value="${publicLink}" class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm w-full text-gray-300 select-all"/>
-                  <button type="button" onclick="navigator.clipboard.writeText('${publicLink}')" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm font-semibold">Copy</button>
+          <div class="card bg-base-200 shadow-sm border border-base-300">
+            <div class="card-body p-5">
+              <h2 class="card-title text-lg text-primary mb-4" data-i18n="settingsFormula">⚙️ Settings & Formula</h2>
+              <form id="settingsForm" onsubmit="saveSettings(event)" class="space-y-4">
+
+                <div class="form-control w-full">
+                  <label class="label"><span class="label-text opacity-70" data-i18n="publicLink">Public Shareable Link</span></label>
+                  <div class="join w-full">
+                    <input type="text" readonly value="${publicLink}" class="input input-bordered join-item w-full font-mono text-sm" />
+                    <button type="button" onclick="navigator.clipboard.writeText('${publicLink}')" class="btn btn-neutral join-item" data-i18n="copy">Copy</button>
+                  </div>
                 </div>
-              </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-sm text-gray-400 mb-1">Public Token String</label>
-                  <input type="text" id="publicToken" value="${cfg.public_token}" class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm w-full text-white" required />
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div class="form-control w-full">
+                    <label class="label"><span class="label-text opacity-70" data-i18n="publicToken">Public Token String</span></label>
+                    <input type="text" id="publicToken" value="${cfg.public_token}" class="input input-bordered w-full" required />
+                  </div>
+                  <div class="form-control w-full">
+                    <label class="label"><span class="label-text opacity-70" data-i18n="customFormula">Custom Formula</span></label>
+                    <input type="text" id="waterFormula" value="${safeFormulaHTML}" class="input input-bordered w-full font-mono" required />
+                    <label class="label"><span class="label-text-alt opacity-60"><span data-i18n="example">Example</span>: <code>distance / 3</code></span></label>
+                  </div>
                 </div>
-                <div>
-                  <label class="block text-sm text-gray-400 mb-1">Custom Formula</label>
-                  <input type="text" id="waterFormula" value="${safeFormulaHTML}" class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm w-full text-white font-mono" required />
-                  <p class="text-xs text-gray-500 mt-1">Example: <code>distance / 3</code> or <code>200 - distance</code></p>
+
+                <div class="flex items-center gap-3 pt-2">
+                  <button type="submit" class="btn btn-primary" data-i18n="saveSettings">Save Settings</button>
+                  <span id="saveStatus" class="text-sm text-success hidden" data-i18n="savedSuccess">Saved successfully!</span>
                 </div>
-              </div>
-              <div class="flex items-center gap-3 pt-2">
-                <button type="submit" class="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-4 py-2 rounded text-sm transition">Save Settings</button>
-                <span id="saveStatus" class="text-sm text-green-400 hidden">Saved successfully!</span>
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
           ` : ''}
 
           <!-- History Table -->
-          <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-            <h2 class="text-lg font-medium text-gray-300 mb-4">Reading Logs (Last 50)</h2>
-            <div class="overflow-x-auto">
-              <table class="w-full text-left border-collapse">
-                <thead>
-                  <tr class="border-b border-gray-700 text-gray-400 text-sm">
-                    <th class="py-2 px-3">Timestamp</th>
-                    <th class="py-2 px-3">Formula Result</th>
-                    <th class="py-2 px-3">Raw Distance</th>
-                    <th class="py-2 px-3">Battery</th>
-                  </tr>
-                </thead>
-                <tbody id="logsTableBody">
-                  <!-- Populated dynamically via client-side script -->
-                </tbody>
-              </table>
+          <div class="card bg-base-200 shadow-sm border border-base-300">
+            <div class="card-body p-5">
+              <h2 class="card-title text-lg mb-4" data-i18n="readingLogs">Reading Logs (Last 50)</h2>
+              <div class="overflow-x-auto">
+                <table class="table table-zebra w-full">
+                  <thead>
+                    <tr class="opacity-70">
+                      <th data-i18n="timestamp">Timestamp</th>
+                      <th data-i18n="formulaResult">Formula Result</th>
+                      <th data-i18n="rawDistance">Raw Distance</th>
+                      <th data-i18n="battery">Battery</th>
+                    </tr>
+                  </thead>
+                  <tbody id="logsTableBody">
+                    <!-- Populated dynamically via client-side script -->
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>
@@ -233,37 +262,132 @@ export default {
           const rawReadings = ${JSON.stringify(results)};
           let currentFormula = ${JSON.stringify(cfg.water_formula)};
 
-          // Helper to convert SQLite UTC strings to local browser time
+          // --- i18n DICTIONARY ---
+          const dict = {
+            en: {
+              title: "Water Tank Monitor",
+              publicView: "Public Read-Only View",
+              adminPanel: "Admin Panel",
+              calcValue: "Calculated Value",
+              batteryLevel: "Battery Level",
+              predictionStatus: "Prediction Status",
+              historyTrend: "Water Metric History & Trend",
+              settingsFormula: "⚙️ Settings & Formula",
+              publicLink: "Public Shareable Link",
+              copy: "Copy",
+              publicToken: "Public Token String",
+              customFormula: "Custom Formula",
+              example: "Example",
+              saveSettings: "Save Settings",
+              savedSuccess: "Saved successfully!",
+              readingLogs: "Reading Logs (Last 50)",
+              timestamp: "Timestamp",
+              formulaResult: "Formula Result",
+              rawDistance: "Raw Distance",
+              battery: "Battery",
+              loading: "Loading...",
+              calculating: "Calculating...",
+              noReadings: "No readings found",
+              tankFull: "Tank is Full!",
+              notEnoughData: "Not enough data",
+              notFilling: "Not currently filling",
+              mins: "mins",
+              days: "days",
+              hours: "hours",
+              raw: "Raw"
+            },
+            de: {
+              title: "Wassertank Monitor",
+              publicView: "Öffentliche Ansicht",
+              adminPanel: "Admin-Panel",
+              calcValue: "Berechneter Wert",
+              batteryLevel: "Batteriestand",
+              predictionStatus: "Vorhersage",
+              historyTrend: "Verlauf & Trend",
+              settingsFormula: "⚙️ Einstellungen & Formel",
+              publicLink: "Öffentlicher Link",
+              copy: "Kopieren",
+              publicToken: "Öffentliches Token",
+              customFormula: "Eigene Formel",
+              example: "Beispiel",
+              saveSettings: "Speichern",
+              savedSuccess: "Erfolgreich gespeichert!",
+              readingLogs: "Messprotokolle (Letzte 50)",
+              timestamp: "Zeitstempel",
+              formulaResult: "Ergebnis",
+              rawDistance: "Rohabstand",
+              battery: "Batterie",
+              loading: "Wird geladen...",
+              calculating: "Berechne...",
+              noReadings: "Keine Messwerte gefunden",
+              tankFull: "Tank ist voll!",
+              notEnoughData: "Nicht genug Daten",
+              notFilling: "Wird aktuell nicht gefüllt",
+              mins: "Minuten",
+              days: "Tage",
+              hours: "Stunden",
+              raw: "Roh"
+            }
+          };
+
+          // --- LANGUAGE STATE MANAGEMENT ---
+          let currentLang = localStorage.getItem('appLang');
+          if (!currentLang) {
+            currentLang = (navigator.language || 'en').startsWith('de') ? 'de' : 'en';
+          }
+
+          function toggleLanguage() {
+            currentLang = currentLang === 'en' ? 'de' : 'en';
+            localStorage.setItem('appLang', currentLang);
+            updateLangButton();
+            applyTranslations();
+            renderDashboardUI(); // Re-render dynamic components (charts, tables)
+          }
+
+          function updateLangButton() {
+            const btn = document.getElementById('langToggleBtn');
+            if (btn) {
+              // Show the flag of the language they can switch TO
+              btn.innerText = currentLang === 'en' ? '🇩🇪 DE' : '🇬🇧 EN';
+            }
+          }
+
+          // Translation Helper
+          function t(key) {
+            return dict[currentLang][key] || key;
+          }
+
+          // Apply translations to static DOM elements
+          function applyTranslations() {
+            document.querySelectorAll('[data-i18n]').forEach(function(el) {
+              const key = el.getAttribute('data-i18n');
+              if (dict[currentLang][key]) el.innerText = dict[currentLang][key];
+            });
+            document.documentElement.lang = currentLang;
+          }
+
+          // Format UTC string to local browser timezone
           function formatLocalDate(utcString) {
             if (!utcString) return '';
             const dateObj = new Date(utcString.replace(' ', 'T') + 'Z');
             if (isNaN(dateObj.getTime())) return utcString;
             return dateObj.toLocaleString(undefined, {
-              year: 'numeric',
-              month: 'short',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit'
+              year: 'numeric', month: 'short', day: 'numeric',
+              hour: '2-digit', minute: '2-digit', second: '2-digit'
             });
           }
 
           function evaluateFormula(distance, formulaString) {
             const d = parseFloat(distance);
             if (isNaN(d)) return 0;
-            
             let formula = formulaString && formulaString.trim().length > 0 ? formulaString : '((200 - distance) / 180) * 100';
             formula = formula.replace(new RegExp(String.fromCharCode(160), 'g'), ' ').trim();
-            
             try {
               const evalFn = new Function('distance', 'return Number(' + formula + ');');
               let result = evalFn(d);
               if (isNaN(result)) return 0;
               return Math.round(result * 10) / 10;
-            } catch (e) {
-              console.error("Client Formula Error for expression:", formula, e);
-              return 0;
-            }
+            } catch (e) { return 0; }
           }
 
           function getBatteryPercentage(voltage) {
@@ -277,7 +401,7 @@ export default {
             if (rawReadings.length === 0) {
               document.getElementById('latestValCard').innerText = 'N/A';
               document.getElementById('latestBatteryCard').innerText = 'N/A';
-              document.getElementById('logsTableBody').innerHTML = '<tr><td colspan="4" class="py-4 text-center text-gray-500">No readings found</td></tr>';
+              document.getElementById('logsTableBody').innerHTML = '<tr><td colspan="4" class="py-4 text-center opacity-50">' + t('noReadings') + '</td></tr>';
               return;
             }
 
@@ -286,21 +410,22 @@ export default {
             const batteryPct = getBatteryPercentage(latest.battery);
             const batteryVolt = Number(latest.battery).toFixed(2);
 
-            document.getElementById('latestValCard').innerHTML = latestVal + ' <span class="text-sm text-gray-400 font-normal">(Raw: ' + latest.distance + 'cm)</span>';
-            document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm text-gray-400 font-normal">(' + batteryVolt + 'V)</span>';
+            document.getElementById('latestValCard').innerHTML = latestVal + ' <span class="text-sm opacity-60 font-normal">(' + t('raw') + ': ' + latest.distance + 'cm)</span>';
+            document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + batteryVolt + 'V)</span>';
 
             const tbody = document.getElementById('logsTableBody');
             tbody.innerHTML = rawReadings.map(function(r) {
-              return '<tr class="border-b border-gray-700/50 hover:bg-gray-700/30 text-sm">' +
-                '<td class="py-2.5 px-3 text-gray-300">' + formatLocalDate(r.timestamp) + '</td>' +
-                '<td class="py-2.5 px-3 text-cyan-300 font-semibold">' + evaluateFormula(r.distance, currentFormula) + '</td>' +
-                '<td class="py-2.5 px-3 text-gray-400">' + r.distance + ' cm</td>' +
-                '<td class="py-2.5 px-3 text-green-300 font-semibold">' + getBatteryPercentage(r.battery) + '% <span class="text-xs text-gray-400 font-normal">(' + Number(r.battery).toFixed(2) + 'V)</span></td>' +
+              return '<tr class="text-sm">' +
+                '<td class="py-3 font-mono opacity-80">' + formatLocalDate(r.timestamp) + '</td>' +
+                '<td class="py-3 text-primary font-bold">' + evaluateFormula(r.distance, currentFormula) + '</td>' +
+                '<td class="py-3 opacity-80">' + r.distance + ' cm</td>' +
+                '<td class="py-3 text-success font-semibold">' + getBatteryPercentage(r.battery) + '% <span class="text-xs opacity-60 font-normal">(' + Number(r.battery).toFixed(2) + 'V)</span></td>' +
               '</tr>';
             }).join('');
 
             updateChart();
             updatePrediction();
+            applyTranslations(); // Re-apply in case dynamic elements overwrote static ones
           }
 
           let waterChart = null;
@@ -312,26 +437,30 @@ export default {
             const ctx = document.getElementById('waterChart').getContext('2d');
             if (waterChart) waterChart.destroy();
 
+            // Neutral chart colors that look good in Light and Dark mode
+            const gridColor = 'rgba(150, 150, 150, 0.15)';
+            const tickColor = '#888888';
+
             waterChart = new Chart(ctx, {
               type: 'line',
               data: {
                 labels: chartData.map(function(d) { return d.timestamp; }),
                 datasets: [{
-                  label: 'Formula Value',
+                  label: t('formulaResult'),
                   data: chartData.map(function(d) { return d.value; }),
-                  borderColor: '#00e5ff',
-                  backgroundColor: 'rgba(0, 229, 255, 0.1)',
-                  borderWidth: 2,
+                  borderColor: '#3b82f6',
+                  backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                  borderWidth: 3,
                   fill: true,
-                  tension: 0.3
+                  tension: 0.4
                 }]
               },
               options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                  y: { grid: { color: 'rgba(255, 255, 255, 0.1)' }, ticks: { color: '#9ca3af' } },
-                  x: { grid: { display: false }, ticks: { color: '#9ca3af', maxTicksLimit: 6 } }
+                  y: { grid: { color: gridColor }, ticks: { color: tickColor } },
+                  x: { grid: { display: false }, ticks: { color: tickColor, maxTicksLimit: 6 } }
                 },
                 plugins: { legend: { display: false } }
               }
@@ -343,15 +472,15 @@ export default {
             if (!el) return;
 
             if (rawReadings.length < 2) {
-              el.innerText = "Not enough data";
+              el.innerText = t('notEnoughData');
               return;
             }
 
             const latest = rawReadings[0];
             const latestVal = evaluateFormula(latest.distance, currentFormula);
-            
+
             if (latestVal >= 100) {
-              el.innerText = "Tank is Full!";
+              el.innerText = t('tankFull');
               return;
             }
 
@@ -363,7 +492,7 @@ export default {
             const valDiff = latestVal - pastVal;
 
             if (timeDiffHours <= 0 || valDiff <= 0) {
-              el.innerText = "Not currently filling";
+              el.innerText = t('notFilling');
               return;
             }
 
@@ -372,16 +501,20 @@ export default {
             const hoursToFull = remaining / ratePerHour;
 
             if (hoursToFull < 1) {
-              el.innerText = "~ " + Math.round(hoursToFull * 60) + " mins";
+              el.innerText = "~ " + Math.round(hoursToFull * 60) + " " + t('mins');
             } else if (hoursToFull > 48) {
-              el.innerText = "2+ days";
+              el.innerText = "2+ " + t('days');
             } else {
-              el.innerText = "~ " + (Math.round(hoursToFull * 10) / 10) + " hours";
+              el.innerText = "~ " + (Math.round(hoursToFull * 10) / 10) + " " + t('hours');
             }
           }
 
+          // Initial Render
+          updateLangButton();
+          applyTranslations();
           renderDashboardUI();
 
+          // Handle Settings Saves
           async function saveSettings(e) {
             e.preventDefault();
             const newFormula = document.getElementById('waterFormula').value;
