@@ -24,7 +24,8 @@ export default {
       const { results } = await env.DB.prepare('SELECT key, value FROM settings').all();
       const settings = {
         public_token: env.PUBLIC_VIEW_TOKEN || 'my-default-public-token',
-        water_formula: '((200 - distance) / 180) * 100' // Default formula
+        water_formula: '(-0.5 * distance) + 150',
+        battery_formula: '(100 * battery) - 360'
       };
       for (const row of results) {
         settings[row.key] = row.value;
@@ -44,7 +45,6 @@ export default {
       try {
         const body = await request.json();
 
-        // 50-second cooldown guardrail
         const lastEntry = await env.DB.prepare(
           'SELECT timestamp FROM readings ORDER BY timestamp DESC LIMIT 1'
         ).first();
@@ -61,7 +61,6 @@ export default {
           'INSERT INTO readings (distance, battery) VALUES (?, ?)'
         ).bind(body.distance, body.battery).run();
 
-        // 2-year retention guardrail
         await env.DB.prepare(`
           DELETE FROM readings
           WHERE timestamp < datetime('now', '-2 years')
@@ -89,10 +88,11 @@ export default {
 
       try {
         const body = await request.json();
-        const { public_token, water_formula } = body;
+        const { public_token, water_formula, battery_formula } = body;
 
         await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('public_token', public_token).run();
         await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('water_formula', water_formula).run();
+        await env.DB.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').bind('battery_formula', battery_formula).run();
 
         return new Response('Settings updated successfully', { status: 200 });
       } catch (e) {
@@ -136,6 +136,7 @@ export default {
     function renderDashboard(results, cfg, isPublic) {
       const publicLink = `${url.origin}/?token=${cfg.public_token}`;
       const safeFormulaHTML = (cfg.water_formula || '').replace(/"/g, '&quot;');
+      const safeBattFormulaHTML = (cfg.battery_formula || '').replace(/"/g, '&quot;');
 
       return `<!DOCTYPE html>
       <html lang="en">
@@ -143,15 +144,22 @@ export default {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Water Tank Monitor</title>
-        <!-- Tailwind + DaisyUI -->
         <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.2/dist/full.min.css" rel="stylesheet" type="text/css" />
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+				<style>
+					/* Force dark zebra stripes and hover effect inside base-200 cards */
+					.custom-zebra tbody tr:nth-child(even) td {
+						background-color: oklch(var(--b3)) !important;
+					}
+					.custom-zebra tbody tr:hover td {
+						background-color: oklch(var(--bc) / 0.05) !important;
+					}
+				</style>
       </head>
       <body class="bg-base-100 text-base-content font-sans p-4 md:p-6 min-h-screen">
         <div class="max-w-4xl mx-auto space-y-6">
 
-          <!-- Header -->
           <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div class="flex items-center gap-3">
               <h1 class="text-3xl font-bold text-primary flex items-center gap-2">
@@ -167,29 +175,30 @@ export default {
             }
           </div>
 
-          <!-- Latest Stat Cards -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
-                <p class="text-sm opacity-70 mb-1" data-i18n="calcValue">Calculated Value</p>
-                <p id="latestValCard" class="text-3xl font-extrabold text-primary" data-i18n="loading">Loading...</p>
+                <p class="text-sm opacity-70 mb-1" data-i18n="calcValue">Calculated Level</p>
+                <!-- Removed data-i18n to prevent overwriting dynamic data -->
+                <p id="latestValCard" class="text-3xl font-extrabold text-primary">Loading...</p>
               </div>
             </div>
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
                 <p class="text-sm opacity-70 mb-1" data-i18n="batteryLevel">Battery Level</p>
-                <p id="latestBatteryCard" class="text-3xl font-extrabold text-success" data-i18n="loading">Loading...</p>
+                <!-- Removed data-i18n to prevent overwriting dynamic data -->
+                <p id="latestBatteryCard" class="text-3xl font-extrabold text-success">Loading...</p>
               </div>
             </div>
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
                 <p class="text-sm opacity-70 mb-1" data-i18n="predictionStatus">Prediction Status</p>
-                <p id="timeToFull" class="text-2xl font-bold text-warning" data-i18n="calculating">Calculating...</p>
+                <!-- Removed data-i18n to prevent overwriting dynamic data -->
+                <p id="timeToFull" class="text-2xl font-bold text-warning">Calculating...</p>
               </div>
             </div>
           </div>
 
-          <!-- Chart Card -->
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
               <h2 class="card-title text-lg mb-4" data-i18n="historyTrend">Water Metric History & Trend</h2>
@@ -199,13 +208,11 @@ export default {
             </div>
           </div>
 
-          <!-- ADMIN SETTINGS PANEL -->
           ${!isPublic ? `
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
-              <h2 class="card-title text-lg text-primary mb-4" data-i18n="settingsFormula">⚙️ Settings & Formula</h2>
+              <h2 class="card-title text-lg text-primary mb-4" data-i18n="settingsFormula">⚙️ Settings & Formulas</h2>
               <form id="settingsForm" onsubmit="saveSettings(event)" class="space-y-4">
-
                 <div class="form-control w-full">
                   <label class="label"><span class="label-text opacity-70" data-i18n="publicLink">Public Shareable Link</span></label>
                   <div class="join w-full">
@@ -213,19 +220,22 @@ export default {
                     <button type="button" onclick="navigator.clipboard.writeText('${publicLink}')" class="btn btn-neutral join-item" data-i18n="copy">Copy</button>
                   </div>
                 </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div class="form-control w-full">
                     <label class="label"><span class="label-text opacity-70" data-i18n="publicToken">Public Token String</span></label>
                     <input type="text" id="publicToken" value="${cfg.public_token}" class="input input-bordered w-full" required />
                   </div>
                   <div class="form-control w-full">
-                    <label class="label"><span class="label-text opacity-70" data-i18n="customFormula">Custom Formula</span></label>
+                    <label class="label"><span class="label-text opacity-70" data-i18n="customFormula">Water Formula (%)</span></label>
                     <input type="text" id="waterFormula" value="${safeFormulaHTML}" class="input input-bordered w-full font-mono" required />
-                    <label class="label"><span class="label-text-alt opacity-60"><span data-i18n="example">Example</span>: <code>distance / 3</code></span></label>
+                    <label class="label"><span class="label-text-alt opacity-60">Ex: <code>(-0.5 * distance) + 150</code></span></label>
+                  </div>
+                  <div class="form-control w-full">
+                    <label class="label"><span class="label-text opacity-70" data-i18n="batteryFormula">Battery Formula (%)</span></label>
+                    <input type="text" id="batteryFormula" value="${safeBattFormulaHTML}" class="input input-bordered w-full font-mono" required />
+                    <label class="label"><span class="label-text-alt opacity-60">Ex: <code>(100 * battery) - 360</code></span></label>
                   </div>
                 </div>
-
                 <div class="flex items-center gap-3 pt-2">
                   <button type="submit" class="btn btn-primary" data-i18n="saveSettings">Save Settings</button>
                   <span id="saveStatus" class="text-sm text-success hidden" data-i18n="savedSuccess">Saved successfully!</span>
@@ -235,16 +245,15 @@ export default {
           </div>
           ` : ''}
 
-          <!-- History Table -->
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
               <h2 class="card-title text-lg mb-4" data-i18n="readingLogs">Reading Logs (Last 50)</h2>
               <div class="overflow-x-auto">
-                <table class="table table-zebra w-full">
+                <table class="table custom-zebra w-full">
                   <thead>
                     <tr class="opacity-70">
                       <th data-i18n="timestamp">Timestamp</th>
-                      <th data-i18n="formulaResult">Formula Result</th>
+                      <th data-i18n="formulaResult">Calculated %</th>
                       <th data-i18n="rawDistance">Raw Distance</th>
                       <th data-i18n="battery">Battery</th>
                     </tr>
@@ -261,28 +270,29 @@ export default {
         <script>
           const rawReadings = ${JSON.stringify(results)};
           let currentFormula = ${JSON.stringify(cfg.water_formula)};
+          let currentBattFormula = ${JSON.stringify(cfg.battery_formula)};
 
-          // --- i18n DICTIONARY ---
           const dict = {
             en: {
               title: "Water Tank Monitor",
               publicView: "Public Read-Only View",
               adminPanel: "Admin Panel",
-              calcValue: "Calculated Value",
+              calcValue: "Calculated Level",
               batteryLevel: "Battery Level",
               predictionStatus: "Prediction Status",
               historyTrend: "Water Metric History & Trend",
-              settingsFormula: "⚙️ Settings & Formula",
+              settingsFormula: "⚙️ Settings & Formulas",
               publicLink: "Public Shareable Link",
               copy: "Copy",
               publicToken: "Public Token String",
-              customFormula: "Custom Formula",
+              customFormula: "Water Formula (%)",
+              batteryFormula: "Battery Formula (%)",
               example: "Example",
               saveSettings: "Save Settings",
               savedSuccess: "Saved successfully!",
               readingLogs: "Reading Logs (Last 50)",
               timestamp: "Timestamp",
-              formulaResult: "Formula Result",
+              formulaResult: "Calculated %",
               rawDistance: "Raw Distance",
               battery: "Battery",
               loading: "Loading...",
@@ -291,30 +301,28 @@ export default {
               tankFull: "Tank is Full!",
               notEnoughData: "Not enough data",
               notFilling: "Not currently filling",
-              mins: "mins",
-              days: "days",
-              hours: "hours",
-              raw: "Raw"
+							daysUntilFull: "days until full"
             },
             de: {
               title: "Wassertank Monitor",
               publicView: "Öffentliche Ansicht",
               adminPanel: "Admin-Panel",
-              calcValue: "Berechneter Wert",
+              calcValue: "Füllstand",
               batteryLevel: "Batteriestand",
               predictionStatus: "Vorhersage",
               historyTrend: "Verlauf & Trend",
-              settingsFormula: "⚙️ Einstellungen & Formel",
+              settingsFormula: "⚙️ Einstellungen & Formeln",
               publicLink: "Öffentlicher Link",
               copy: "Kopieren",
               publicToken: "Öffentliches Token",
-              customFormula: "Eigene Formel",
+              customFormula: "Wasserformel (%)",
+              batteryFormula: "Batterieformel (%)",
               example: "Beispiel",
               saveSettings: "Speichern",
               savedSuccess: "Erfolgreich gespeichert!",
               readingLogs: "Messprotokolle (Letzte 50)",
               timestamp: "Zeitstempel",
-              formulaResult: "Ergebnis",
+              formulaResult: "Berechnet %",
               rawDistance: "Rohabstand",
               battery: "Batterie",
               loading: "Wird geladen...",
@@ -323,50 +331,49 @@ export default {
               tankFull: "Tank ist voll!",
               notEnoughData: "Nicht genug Daten",
               notFilling: "Wird aktuell nicht gefüllt",
-              mins: "Minuten",
-              days: "Tage",
-              hours: "Stunden",
-              raw: "Roh"
+							daysUntilFull: "Tage bis voll"
             }
           };
 
-          // --- LANGUAGE STATE MANAGEMENT ---
-          let currentLang = localStorage.getItem('appLang');
-          if (!currentLang) {
+          // --- BULLETPROOF LANGUAGE SETUP ---
+          let currentLang = 'en';
+          try {
+            const saved = localStorage.getItem('appLang');
+            if (saved && dict[saved]) {
+              currentLang = saved;
+            } else {
+              currentLang = (navigator.language || 'en').startsWith('de') ? 'de' : 'en';
+            }
+          } catch(e) {
             currentLang = (navigator.language || 'en').startsWith('de') ? 'de' : 'en';
           }
 
           function toggleLanguage() {
             currentLang = currentLang === 'en' ? 'de' : 'en';
-            localStorage.setItem('appLang', currentLang);
+            try { localStorage.setItem('appLang', currentLang); } catch(e) {}
             updateLangButton();
-            applyTranslations();
-            renderDashboardUI(); // Re-render dynamic components (charts, tables)
+            applyTranslations(); // Only translates static HTML framework
+            renderDashboardUI(); // Re-renders dynamic data with new translation variables
           }
 
           function updateLangButton() {
             const btn = document.getElementById('langToggleBtn');
-            if (btn) {
-              // Show the flag of the language they can switch TO
-              btn.innerText = currentLang === 'en' ? '🇩🇪 DE' : '🇬🇧 EN';
-            }
+            if (btn) btn.innerText = currentLang === 'en' ? '🇩🇪 DE' : '🇬🇧 EN';
           }
 
-          // Translation Helper
           function t(key) {
+            if (!dict[currentLang]) currentLang = 'en';
             return dict[currentLang][key] || key;
           }
 
-          // Apply translations to static DOM elements
           function applyTranslations() {
             document.querySelectorAll('[data-i18n]').forEach(function(el) {
               const key = el.getAttribute('data-i18n');
-              if (dict[currentLang][key]) el.innerText = dict[currentLang][key];
+              if (dict[currentLang] && dict[currentLang][key]) el.innerText = dict[currentLang][key];
             });
             document.documentElement.lang = currentLang;
           }
 
-          // Format UTC string to local browser timezone
           function formatLocalDate(utcString) {
             if (!utcString) return '';
             const dateObj = new Date(utcString.replace(' ', 'T') + 'Z');
@@ -380,7 +387,7 @@ export default {
           function evaluateFormula(distance, formulaString) {
             const d = parseFloat(distance);
             if (isNaN(d)) return 0;
-            let formula = formulaString && formulaString.trim().length > 0 ? formulaString : '((200 - distance) / 180) * 100';
+            let formula = formulaString && formulaString.trim().length > 0 ? formulaString : '(-0.5 * distance) + 150';
             formula = formula.replace(new RegExp(String.fromCharCode(160), 'g'), ' ').trim();
             try {
               const evalFn = new Function('distance', 'return Number(' + formula + ');');
@@ -390,46 +397,63 @@ export default {
             } catch (e) { return 0; }
           }
 
-          function getBatteryPercentage(voltage) {
-            const v = parseFloat(voltage);
-            if (isNaN(v)) return 0;
-            const pct = ((v - 3.3) / (4.2 - 3.3)) * 100;
-            return Math.min(Math.max(Math.round(pct), 0), 100);
+          function evaluateBattery(voltage, formulaString) {
+            const b = parseFloat(voltage);
+            if (isNaN(b)) return 0;
+            let formula = formulaString && formulaString.trim().length > 0 ? formulaString : '(100 * battery) - 360';
+            formula = formula.replace(new RegExp(String.fromCharCode(160), 'g'), ' ').trim();
+            try {
+              const evalFn = new Function('battery', 'return Number(' + formula + ');');
+              let result = evalFn(b);
+              if (isNaN(result)) return 0;
+              return Math.min(Math.max(Math.round(result), 0), 100);
+            } catch (e) { return 0; }
           }
 
           function renderDashboardUI() {
-            if (rawReadings.length === 0) {
-              document.getElementById('latestValCard').innerText = 'N/A';
-              document.getElementById('latestBatteryCard').innerText = 'N/A';
-              document.getElementById('logsTableBody').innerHTML = '<tr><td colspan="4" class="py-4 text-center opacity-50">' + t('noReadings') + '</td></tr>';
-              return;
+            try {
+              if (!rawReadings || rawReadings.length === 0) {
+                document.getElementById('latestValCard').innerText = 'N/A';
+                document.getElementById('latestBatteryCard').innerText = 'N/A';
+                document.getElementById('timeToFull').innerText = 'N/A';
+                document.getElementById('logsTableBody').innerHTML = '<tr><td colspan="4" class="py-4 text-center opacity-50">' + t('noReadings') + '</td></tr>';
+                return;
+              }
+
+              const latest = rawReadings[0];
+              const latestVal = evaluateFormula(latest.distance, currentFormula);
+              const batteryPct = evaluateBattery(latest.battery, currentBattFormula);
+              const rawBatt = latest.battery ? Number(latest.battery).toFixed(2) : '0.00';
+
+              document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + latest.distance + 'cm)</span>';
+              document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + rawBatt + 'V)</span>';
+
+              const tbody = document.getElementById('logsTableBody');
+              tbody.innerHTML = rawReadings.map(function(r) {
+                const rBatt = r.battery ? Number(r.battery).toFixed(2) : '0.00';
+                return '<tr class="text-sm transition-colors">' +
+                  '<td class="py-3 font-mono opacity-80">' + formatLocalDate(r.timestamp) + '</td>' +
+                  '<td class="py-3 text-primary font-bold">' + evaluateFormula(r.distance, currentFormula) + '%</td>' +
+                  '<td class="py-3 opacity-80">' + r.distance + ' cm</td>' +
+                  '<td class="py-3 text-success font-semibold">' + evaluateBattery(r.battery, currentBattFormula) + '% <span class="text-xs opacity-60 font-normal">(' + rBatt + 'V)</span></td>' +
+                '</tr>';
+              }).join('');
+
+              updateChart();
+              updatePrediction();
+
+            } catch (error) {
+              console.error("Dashboard rendering error:", error);
+              document.getElementById('latestValCard').innerText = 'Error';
+              document.getElementById('latestBatteryCard').innerText = 'Error';
+              document.getElementById('timeToFull').innerText = 'Error';
             }
-
-            const latest = rawReadings[0];
-            const latestVal = evaluateFormula(latest.distance, currentFormula);
-            const batteryPct = getBatteryPercentage(latest.battery);
-            const batteryVolt = Number(latest.battery).toFixed(2);
-
-            document.getElementById('latestValCard').innerHTML = latestVal + ' <span class="text-sm opacity-60 font-normal">(' + t('raw') + ': ' + latest.distance + 'cm)</span>';
-            document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + batteryVolt + 'V)</span>';
-
-            const tbody = document.getElementById('logsTableBody');
-            tbody.innerHTML = rawReadings.map(function(r) {
-              return '<tr class="text-sm">' +
-                '<td class="py-3 font-mono opacity-80">' + formatLocalDate(r.timestamp) + '</td>' +
-                '<td class="py-3 text-primary font-bold">' + evaluateFormula(r.distance, currentFormula) + '</td>' +
-                '<td class="py-3 opacity-80">' + r.distance + ' cm</td>' +
-                '<td class="py-3 text-success font-semibold">' + getBatteryPercentage(r.battery) + '% <span class="text-xs opacity-60 font-normal">(' + Number(r.battery).toFixed(2) + 'V)</span></td>' +
-              '</tr>';
-            }).join('');
-
-            updateChart();
-            updatePrediction();
-            applyTranslations(); // Re-apply in case dynamic elements overwrote static ones
           }
 
           let waterChart = null;
           function updateChart() {
+            if (!window.Chart) return;
+
             const chartData = [...rawReadings].reverse().map(function(r) {
               return { timestamp: formatLocalDate(r.timestamp), value: evaluateFormula(r.distance, currentFormula) };
             });
@@ -437,7 +461,6 @@ export default {
             const ctx = document.getElementById('waterChart').getContext('2d');
             if (waterChart) waterChart.destroy();
 
-            // Neutral chart colors that look good in Light and Dark mode
             const gridColor = 'rgba(150, 150, 150, 0.15)';
             const tickColor = '#888888';
 
@@ -446,7 +469,7 @@ export default {
               data: {
                 labels: chartData.map(function(d) { return d.timestamp; }),
                 datasets: [{
-                  label: t('formulaResult'),
+                  label: t('formulaResult') + ' (%)',
                   data: chartData.map(function(d) { return d.value; }),
                   borderColor: '#3b82f6',
                   backgroundColor: 'rgba(59, 130, 246, 0.15)',
@@ -476,40 +499,48 @@ export default {
               return;
             }
 
-            const latest = rawReadings[0];
-            const latestVal = evaluateFormula(latest.distance, currentFormula);
-
+            const latestVal = evaluateFormula(rawReadings[0].distance, currentFormula);
             if (latestVal >= 100) {
               el.innerText = t('tankFull');
               return;
             }
 
-            const sampleSize = Math.min(rawReadings.length, 10);
-            const past = rawReadings[sampleSize - 1];
-            const pastVal = evaluateFormula(past.distance, currentFormula);
+            let totalIncrease = 0;
+            let daysFilling = 0;
 
-            const timeDiffHours = (new Date(latest.timestamp.replace(' ', 'T') + 'Z') - new Date(past.timestamp.replace(' ', 'T') + 'Z')) / (1000 * 60 * 60);
-            const valDiff = latestVal - pastVal;
+            for (let i = 0; i < rawReadings.length - 1; i++) {
+              const current = rawReadings[i];
+              const prev = rawReadings[i + 1];
 
-            if (timeDiffHours <= 0 || valDiff <= 0) {
+              const currentV = evaluateFormula(current.distance, currentFormula);
+              const prevV = evaluateFormula(prev.distance, currentFormula);
+              const diffVal = currentV - prevV;
+
+              if (diffVal > 0) {
+                const t1 = new Date(current.timestamp.replace(' ', 'T') + 'Z').getTime();
+                const t2 = new Date(prev.timestamp.replace(' ', 'T') + 'Z').getTime();
+                const diffDays = (t1 - t2) / (1000 * 60 * 60 * 24);
+
+                if (diffDays > 0 && diffDays < 30) {
+                  totalIncrease += diffVal;
+                  daysFilling += diffDays;
+                }
+              }
+            }
+
+            if (totalIncrease <= 0 || daysFilling <= 0) {
               el.innerText = t('notFilling');
               return;
             }
 
-            const ratePerHour = valDiff / timeDiffHours;
+            const avgDailyIncrease = totalIncrease / daysFilling;
             const remaining = 100 - latestVal;
-            const hoursToFull = remaining / ratePerHour;
+            const daysToFull = Math.ceil(remaining / avgDailyIncrease);
 
-            if (hoursToFull < 1) {
-              el.innerText = "~ " + Math.round(hoursToFull * 60) + " " + t('mins');
-            } else if (hoursToFull > 48) {
-              el.innerText = "2+ " + t('days');
-            } else {
-              el.innerText = "~ " + (Math.round(hoursToFull * 10) / 10) + " " + t('hours');
-            }
+            el.innerText = "~ " + daysToFull + " " + t('daysUntilFull');
           }
 
-          // Initial Render
+          // Initial Render - No redundant applyTranslations needed in renderDashboardUI
           updateLangButton();
           applyTranslations();
           renderDashboardUI();
@@ -518,9 +549,11 @@ export default {
           async function saveSettings(e) {
             e.preventDefault();
             const newFormula = document.getElementById('waterFormula').value;
+            const newBattFormula = document.getElementById('batteryFormula').value;
             const payload = {
               public_token: document.getElementById('publicToken').value,
-              water_formula: newFormula
+              water_formula: newFormula,
+              battery_formula: newBattFormula
             };
 
             const res = await fetch('/api/settings', {
@@ -531,6 +564,7 @@ export default {
 
             if (res.ok) {
               currentFormula = newFormula;
+              currentBattFormula = newBattFormula;
               renderDashboardUI();
               const status = document.getElementById('saveStatus');
               status.classList.remove('hidden');
