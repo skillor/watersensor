@@ -147,27 +147,33 @@ export default {
         <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.2/dist/full.min.css" rel="stylesheet" type="text/css" />
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-				<style>
-					/* Force dark zebra stripes and hover effect inside base-200 cards */
-					.custom-zebra tbody tr:nth-child(even) td {
-						background-color: oklch(var(--b3)) !important;
-					}
-					.custom-zebra tbody tr:hover td {
-						background-color: oklch(var(--bc) / 0.05) !important;
-					}
-				</style>
+        <style>
+          /* Force dark zebra stripes and hover effect inside base-200 cards */
+          .custom-zebra tbody tr:nth-child(even) td {
+            background-color: oklch(var(--b3)) !important;
+          }
+          .custom-zebra tbody tr:hover td {
+            background-color: oklch(var(--bc) / 0.05) !important;
+          }
+        </style>
       </head>
       <body class="bg-base-100 text-base-content font-sans p-4 md:p-6 min-h-screen">
         <div class="max-w-4xl mx-auto space-y-6">
 
           <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div class="flex items-center gap-3">
-              <h1 class="text-3xl font-bold text-primary flex items-center gap-2">
-                💧 <span data-i18n="title">Water Tank Monitor</span>
-              </h1>
-              <button onclick="toggleLanguage()" id="langToggleBtn" class="btn btn-sm btn-outline btn-primary ml-2 rounded-full px-3">
-                🇩🇪 DE
-              </button>
+            <div>
+              <div class="flex items-center gap-3">
+                <h1 class="text-3xl font-bold text-primary flex items-center gap-2">
+                  💧 <span data-i18n="title">Water Tank Monitor</span>
+                </h1>
+                <button onclick="toggleLanguage()" id="langToggleBtn" class="btn btn-sm btn-outline btn-primary ml-2 rounded-full px-3">
+                  🇩🇪 DE
+                </button>
+              </div>
+              <!-- Latest Measurement Date -->
+              <div class="mt-1 text-sm opacity-70">
+                <span data-i18n="lastUpdated">Last measurement</span>: <span id="lastUpdatedDate" class="font-semibold text-base-content">Loading...</span>
+              </div>
             </div>
             ${isPublic
               ? '<div class="badge badge-info badge-outline font-semibold" data-i18n="publicView">Public Read-Only View</div>'
@@ -179,21 +185,18 @@ export default {
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
                 <p class="text-sm opacity-70 mb-1" data-i18n="calcValue">Calculated Level</p>
-                <!-- Removed data-i18n to prevent overwriting dynamic data -->
                 <p id="latestValCard" class="text-3xl font-extrabold text-primary">Loading...</p>
               </div>
             </div>
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
                 <p class="text-sm opacity-70 mb-1" data-i18n="batteryLevel">Battery Level</p>
-                <!-- Removed data-i18n to prevent overwriting dynamic data -->
                 <p id="latestBatteryCard" class="text-3xl font-extrabold text-success">Loading...</p>
               </div>
             </div>
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
                 <p class="text-sm opacity-70 mb-1" data-i18n="predictionStatus">Prediction Status</p>
-                <!-- Removed data-i18n to prevent overwriting dynamic data -->
                 <p id="timeToFull" class="text-2xl font-bold text-warning">Calculating...</p>
               </div>
             </div>
@@ -272,9 +275,11 @@ export default {
           let currentFormula = ${JSON.stringify(cfg.water_formula)};
           let currentBattFormula = ${JSON.stringify(cfg.battery_formula)};
 
+					const minSensorDistance = 35;
           const dict = {
             en: {
               title: "Water Tank Monitor",
+              lastUpdated: "Last measurement",
               publicView: "Public Read-Only View",
               adminPanel: "Admin Panel",
               calcValue: "Calculated Level",
@@ -301,10 +306,12 @@ export default {
               tankFull: "Tank is Full!",
               notEnoughData: "Not enough data",
               notFilling: "Not currently filling",
-							daysUntilFull: "days until full"
+              daysUntilFull: "days until full",
+              errorTooClose: "Error"
             },
             de: {
               title: "Wassertank Monitor",
+              lastUpdated: "Letzte Messung",
               publicView: "Öffentliche Ansicht",
               adminPanel: "Admin-Panel",
               calcValue: "Füllstand",
@@ -331,7 +338,8 @@ export default {
               tankFull: "Tank ist voll!",
               notEnoughData: "Nicht genug Daten",
               notFilling: "Wird aktuell nicht gefüllt",
-							daysUntilFull: "Tage bis voll"
+              daysUntilFull: "Tage bis voll",
+              errorTooClose: "Fehler"
             }
           };
 
@@ -352,8 +360,8 @@ export default {
             currentLang = currentLang === 'en' ? 'de' : 'en';
             try { localStorage.setItem('appLang', currentLang); } catch(e) {}
             updateLangButton();
-            applyTranslations(); // Only translates static HTML framework
-            renderDashboardUI(); // Re-renders dynamic data with new translation variables
+            applyTranslations();
+            renderDashboardUI();
           }
 
           function updateLangButton() {
@@ -374,13 +382,14 @@ export default {
             document.documentElement.lang = currentLang;
           }
 
+          // Format UTC string to local browser timezone WITHOUT seconds
           function formatLocalDate(utcString) {
             if (!utcString) return '';
             const dateObj = new Date(utcString.replace(' ', 'T') + 'Z');
             if (isNaN(dateObj.getTime())) return utcString;
             return dateObj.toLocaleString(undefined, {
               year: 'numeric', month: 'short', day: 'numeric',
-              hour: '2-digit', minute: '2-digit', second: '2-digit'
+              hour: '2-digit', minute: '2-digit'
             });
           }
 
@@ -413,6 +422,7 @@ export default {
           function renderDashboardUI() {
             try {
               if (!rawReadings || rawReadings.length === 0) {
+                document.getElementById('lastUpdatedDate').innerText = 'N/A';
                 document.getElementById('latestValCard').innerText = 'N/A';
                 document.getElementById('latestBatteryCard').innerText = 'N/A';
                 document.getElementById('timeToFull').innerText = 'N/A';
@@ -421,19 +431,33 @@ export default {
               }
 
               const latest = rawReadings[0];
+              document.getElementById('lastUpdatedDate').innerText = formatLocalDate(latest.timestamp);
+
               const latestVal = evaluateFormula(latest.distance, currentFormula);
               const batteryPct = evaluateBattery(latest.battery, currentBattFormula);
               const rawBatt = latest.battery ? Number(latest.battery).toFixed(2) : '0.00';
 
-              document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + latest.distance + 'cm)</span>';
+              // Show Error State if distance < 35
+              if (latest.distance < minSensorDistance) {
+                document.getElementById('latestValCard').innerHTML = '<span class="text-error">' + t('errorTooClose') + '</span> <span class="text-sm opacity-60 font-normal text-base-content">(' + latest.distance + 'cm)</span>';
+              } else {
+                document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + latest.distance + 'cm)</span>';
+              }
+
               document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + rawBatt + 'V)</span>';
 
               const tbody = document.getElementById('logsTableBody');
               tbody.innerHTML = rawReadings.map(function(r) {
                 const rBatt = r.battery ? Number(r.battery).toFixed(2) : '0.00';
+
+                // Show Error State in table if distance < 35
+                const valDisplay = r.distance < minSensorDistance
+                  ? '<span class="text-error">' + t('errorTooClose') + '</span>'
+                  : evaluateFormula(r.distance, currentFormula) + '%';
+
                 return '<tr class="text-sm transition-colors">' +
                   '<td class="py-3 font-mono opacity-80">' + formatLocalDate(r.timestamp) + '</td>' +
-                  '<td class="py-3 text-primary font-bold">' + evaluateFormula(r.distance, currentFormula) + '%</td>' +
+                  '<td class="py-3 text-primary font-bold">' + valDisplay + '</td>' +
                   '<td class="py-3 opacity-80">' + r.distance + ' cm</td>' +
                   '<td class="py-3 text-success font-semibold">' + evaluateBattery(r.battery, currentBattFormula) + '% <span class="text-xs opacity-60 font-normal">(' + rBatt + 'V)</span></td>' +
                 '</tr>';
@@ -454,7 +478,9 @@ export default {
           function updateChart() {
             if (!window.Chart) return;
 
-            const chartData = [...rawReadings].reverse().map(function(r) {
+            const chartData = [...rawReadings].reverse().filter(function(r) {
+							return r.distance >= minSensorDistance;
+						}).map(function(r) {
               return { timestamp: formatLocalDate(r.timestamp), value: evaluateFormula(r.distance, currentFormula) };
             });
 
@@ -499,6 +525,12 @@ export default {
               return;
             }
 
+            // Halt prediction if sensor is blocked or too close
+            if (rawReadings[0].distance < minSensorDistance) {
+              el.innerText = t('errorTooClose');
+              return;
+            }
+
             const latestVal = evaluateFormula(rawReadings[0].distance, currentFormula);
             if (latestVal >= 100) {
               el.innerText = t('tankFull');
@@ -511,6 +543,9 @@ export default {
             for (let i = 0; i < rawReadings.length - 1; i++) {
               const current = rawReadings[i];
               const prev = rawReadings[i + 1];
+
+              // Skip calculation points if either reading had a <35 error
+              if(current.distance < minSensorDistance || prev.distance < minSensorDistance) continue;
 
               const currentV = evaluateFormula(current.distance, currentFormula);
               const prevV = evaluateFormula(prev.distance, currentFormula);
@@ -540,7 +575,6 @@ export default {
             el.innerText = "~ " + daysToFull + " " + t('daysUntilFull');
           }
 
-          // Initial Render - No redundant applyTranslations needed in renderDashboardUI
           updateLangButton();
           applyTranslations();
           renderDashboardUI();
