@@ -8,3 +8,4 @@ TODO:
 -better fail readings (on <35cm retry in 2h?)
 -better wakeup timing?
 -webpage scale graph correctly with time
+-webpage ignore readings outside 0-100%
