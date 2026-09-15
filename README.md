@@ -7,5 +7,4 @@ TODO:
 -replace skillconfig app with esp server webpage for provisioning (and get continous readings for alignment)
 -better fail readings (on <35cm retry in 2h?)
 -better wakeup timing?
--webpage scale graph correctly with time
--webpage ignore readings outside 0-100%
+-webpage graph show only recent readings (with slider?)
