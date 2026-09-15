@@ -147,6 +147,7 @@ export default {
         <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.2/dist/full.min.css" rel="stylesheet" type="text/css" />
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
         <style>
           /* Force dark zebra stripes and hover effect inside base-200 cards */
           .custom-zebra tbody tr:nth-child(even) td {
@@ -275,7 +276,6 @@ export default {
           let currentFormula = ${JSON.stringify(cfg.water_formula)};
           let currentBattFormula = ${JSON.stringify(cfg.battery_formula)};
 
-					const minSensorDistance = 35;
           const dict = {
             en: {
               title: "Water Tank Monitor",
@@ -307,7 +307,7 @@ export default {
               notEnoughData: "Not enough data",
               notFilling: "Not currently filling",
               daysUntilFull: "days until full",
-              errorTooClose: "Error"
+              errorBounds: "Error"
             },
             de: {
               title: "Wassertank Monitor",
@@ -339,7 +339,7 @@ export default {
               notEnoughData: "Nicht genug Daten",
               notFilling: "Wird aktuell nicht gefüllt",
               daysUntilFull: "Tage bis voll",
-              errorTooClose: "Fehler"
+              errorBounds: "Fehler"
             }
           };
 
@@ -437,9 +437,9 @@ export default {
               const batteryPct = evaluateBattery(latest.battery, currentBattFormula);
               const rawBatt = latest.battery ? Number(latest.battery).toFixed(2) : '0.00';
 
-              // Show Error State if distance < 35
-              if (latest.distance < minSensorDistance) {
-                document.getElementById('latestValCard').innerHTML = '<span class="text-error">' + t('errorTooClose') + '</span> <span class="text-sm opacity-60 font-normal text-base-content">(' + latest.distance + 'cm)</span>';
+              // Show Error State if percentage is out of logical bounds (0-100)
+              if (latestVal < 0 || latestVal > 100) {
+                document.getElementById('latestValCard').innerHTML = '<span class="text-error">' + t('errorBounds') + '</span> <span class="text-sm opacity-60 font-normal text-base-content">(' + latest.distance + 'cm)</span>';
               } else {
                 document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + latest.distance + 'cm)</span>';
               }
@@ -449,11 +449,12 @@ export default {
               const tbody = document.getElementById('logsTableBody');
               tbody.innerHTML = rawReadings.map(function(r) {
                 const rBatt = r.battery ? Number(r.battery).toFixed(2) : '0.00';
+                const v = evaluateFormula(r.distance, currentFormula);
 
-                // Show Error State in table if distance < 35
-                const valDisplay = r.distance < minSensorDistance
-                  ? '<span class="text-error">' + t('errorTooClose') + '</span>'
-                  : evaluateFormula(r.distance, currentFormula) + '%';
+                // Show Error State in table if percentage is out of bounds
+                const valDisplay = (v < 0 || v > 100)
+                  ? '<span class="text-error">' + t('errorBounds') + '</span>'
+                  : v + '%';
 
                 return '<tr class="text-sm transition-colors">' +
                   '<td class="py-3 font-mono opacity-80">' + formatLocalDate(r.timestamp) + '</td>' +
@@ -478,10 +479,15 @@ export default {
           function updateChart() {
             if (!window.Chart) return;
 
+            // Map standard coordinates for time-scaled X-axis and filter out-of-bounds readings
             const chartData = [...rawReadings].reverse().filter(function(r) {
-							return r.distance >= minSensorDistance;
-						}).map(function(r) {
-              return { timestamp: formatLocalDate(r.timestamp), value: evaluateFormula(r.distance, currentFormula) };
+              const v = evaluateFormula(r.distance, currentFormula);
+              return v >= 0 && v <= 100;
+            }).map(function(r) {
+              return {
+                x: new Date(r.timestamp.replace(' ', 'T') + 'Z'),
+                y: evaluateFormula(r.distance, currentFormula)
+              };
             });
 
             const ctx = document.getElementById('waterChart').getContext('2d');
@@ -493,10 +499,9 @@ export default {
             waterChart = new Chart(ctx, {
               type: 'line',
               data: {
-                labels: chartData.map(function(d) { return d.timestamp; }),
                 datasets: [{
                   label: t('formulaResult') + ' (%)',
-                  data: chartData.map(function(d) { return d.value; }),
+                  data: chartData,
                   borderColor: '#3b82f6',
                   backgroundColor: 'rgba(59, 130, 246, 0.15)',
                   borderWidth: 3,
@@ -509,7 +514,11 @@ export default {
                 maintainAspectRatio: false,
                 scales: {
                   y: { grid: { color: gridColor }, ticks: { color: tickColor } },
-                  x: { grid: { display: false }, ticks: { color: tickColor, maxTicksLimit: 6 } }
+                  x: {
+                    type: 'time',
+                    grid: { display: false },
+                    ticks: { color: tickColor, maxTicksLimit: 6 }
+                  }
                 },
                 plugins: { legend: { display: false } }
               }
@@ -525,13 +534,13 @@ export default {
               return;
             }
 
-            // Halt prediction if sensor is blocked or too close
-            if (rawReadings[0].distance < minSensorDistance) {
-              el.innerText = t('errorTooClose');
+            // Halt prediction if sensor is blocked or out of logical bounds
+            const latestVal = evaluateFormula(rawReadings[0].distance, currentFormula);
+            if (latestVal < 0 || latestVal > 100) {
+              el.innerText = t('errorBounds');
               return;
             }
 
-            const latestVal = evaluateFormula(rawReadings[0].distance, currentFormula);
             if (latestVal >= 100) {
               el.innerText = t('tankFull');
               return;
@@ -544,11 +553,12 @@ export default {
               const current = rawReadings[i];
               const prev = rawReadings[i + 1];
 
-              // Skip calculation points if either reading had a <35 error
-              if(current.distance < minSensorDistance || prev.distance < minSensorDistance) continue;
-
               const currentV = evaluateFormula(current.distance, currentFormula);
               const prevV = evaluateFormula(prev.distance, currentFormula);
+
+              // Skip calculation points if either reading had an out of bounds error
+              if(currentV < 0 || currentV > 100 || prevV < 0 || prevV > 100) continue;
+
               const diffVal = currentV - prevV;
 
               if (diffVal > 0) {
