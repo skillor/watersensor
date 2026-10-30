@@ -45,6 +45,7 @@ export default {
       try {
         const body = await request.json();
 
+        // 50-second cooldown guardrail
         const lastEntry = await env.DB.prepare(
           'SELECT timestamp FROM readings ORDER BY timestamp DESC LIMIT 1'
         ).first();
@@ -61,6 +62,7 @@ export default {
           'INSERT INTO readings (distance, battery) VALUES (?, ?)'
         ).bind(body.distance, body.battery).run();
 
+        // 2-year retention guardrail
         await env.DB.prepare(`
           DELETE FROM readings
           WHERE timestamp < datetime('now', '-2 years')
@@ -161,6 +163,7 @@ export default {
       <body class="bg-base-100 text-base-content font-sans p-4 md:p-6 min-h-screen">
         <div class="max-w-4xl mx-auto space-y-6">
 
+          <!-- Header -->
           <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
               <div class="flex items-center gap-3">
@@ -171,9 +174,8 @@ export default {
                   🇩🇪 DE
                 </button>
               </div>
-              <!-- Latest Measurement Date -->
               <div class="mt-1 text-sm opacity-70">
-                <span data-i18n="lastUpdated">Last measurement</span>: <span id="lastUpdatedDate" class="font-semibold text-base-content">Loading...</span>
+                <span data-i18n="lastUpdated">Last successful measurement</span>: <span id="lastUpdatedDate" class="font-semibold text-base-content">Loading...</span>
               </div>
             </div>
             ${isPublic
@@ -182,6 +184,7 @@ export default {
             }
           </div>
 
+          <!-- Latest Stat Cards -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="card bg-base-200 shadow-sm border border-base-300">
               <div class="card-body p-5">
@@ -203,6 +206,7 @@ export default {
             </div>
           </div>
 
+          <!-- Chart Card -->
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
               <h2 class="card-title text-lg mb-4" data-i18n="historyTrend">Water Metric History & Trend</h2>
@@ -212,6 +216,7 @@ export default {
             </div>
           </div>
 
+          <!-- ADMIN SETTINGS PANEL -->
           ${!isPublic ? `
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
@@ -249,6 +254,7 @@ export default {
           </div>
           ` : ''}
 
+          <!-- History Table -->
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
               <h2 class="card-title text-lg mb-4" data-i18n="readingLogs">Reading Logs (Last 50)</h2>
@@ -276,10 +282,11 @@ export default {
           let currentFormula = ${JSON.stringify(cfg.water_formula)};
           let currentBattFormula = ${JSON.stringify(cfg.battery_formula)};
 
+          // --- i18n DICTIONARY ---
           const dict = {
             en: {
               title: "Water Tank Monitor",
-              lastUpdated: "Last measurement",
+              lastUpdated: "Last successful measurement",
               publicView: "Public Read-Only View",
               adminPanel: "Admin Panel",
               calcValue: "Calculated Level",
@@ -292,7 +299,6 @@ export default {
               publicToken: "Public Token String",
               customFormula: "Water Formula (%)",
               batteryFormula: "Battery Formula (%)",
-              example: "Example",
               saveSettings: "Save Settings",
               savedSuccess: "Saved successfully!",
               readingLogs: "Reading Logs (Last 50)",
@@ -300,18 +306,18 @@ export default {
               formulaResult: "Calculated %",
               rawDistance: "Raw Distance",
               battery: "Battery",
-              loading: "Loading...",
-              calculating: "Calculating...",
               noReadings: "No readings found",
               tankFull: "Tank is Full!",
               notEnoughData: "Not enough data",
               notFilling: "Not currently filling",
               daysUntilFull: "days until full",
-              errorBounds: "Error"
+              errorBounds: "Error",
+              oneDayAgo: "(1 day ago)",
+              daysAgo: "({days} days ago)"
             },
             de: {
               title: "Wassertank Monitor",
-              lastUpdated: "Letzte Messung",
+              lastUpdated: "Letzte erfolgreiche Messung",
               publicView: "Öffentliche Ansicht",
               adminPanel: "Admin-Panel",
               calcValue: "Füllstand",
@@ -324,7 +330,6 @@ export default {
               publicToken: "Öffentliches Token",
               customFormula: "Wasserformel (%)",
               batteryFormula: "Batterieformel (%)",
-              example: "Beispiel",
               saveSettings: "Speichern",
               savedSuccess: "Erfolgreich gespeichert!",
               readingLogs: "Messprotokolle (Letzte 50)",
@@ -332,18 +337,18 @@ export default {
               formulaResult: "Berechnet %",
               rawDistance: "Rohabstand",
               battery: "Batterie",
-              loading: "Wird geladen...",
-              calculating: "Berechne...",
               noReadings: "Keine Messwerte gefunden",
               tankFull: "Tank ist voll!",
               notEnoughData: "Nicht genug Daten",
               notFilling: "Wird aktuell nicht gefüllt",
               daysUntilFull: "Tage bis voll",
-              errorBounds: "Fehler"
+              errorBounds: "Fehler",
+              oneDayAgo: "(vor 1 Tag)",
+              daysAgo: "(vor {days} Tagen)"
             }
           };
 
-          // --- BULLETPROOF LANGUAGE SETUP ---
+          // --- LANGUAGE STATE MANAGEMENT ---
           let currentLang = 'en';
           try {
             const saved = localStorage.getItem('appLang');
@@ -393,6 +398,7 @@ export default {
             });
           }
 
+          // Evaluates custom water formula safely
           function evaluateFormula(distance, formulaString) {
             const d = parseFloat(distance);
             if (isNaN(d)) return 0;
@@ -406,6 +412,7 @@ export default {
             } catch (e) { return 0; }
           }
 
+          // Evaluates custom battery formula safely
           function evaluateBattery(voltage, formulaString) {
             const b = parseFloat(voltage);
             if (isNaN(b)) return 0;
@@ -419,8 +426,15 @@ export default {
             } catch (e) { return 0; }
           }
 
+          // Centralized logic to determine if a reading falls inside physical & logical bounds
+          function isValidReading(r) {
+            const v = evaluateFormula(r.distance, currentFormula);
+            return v >= 0 && v <= 100;
+          }
+
           function renderDashboardUI() {
             try {
+              // Handle empty database entirely
               if (!rawReadings || rawReadings.length === 0) {
                 document.getElementById('lastUpdatedDate').innerText = 'N/A';
                 document.getElementById('latestValCard').innerText = 'N/A';
@@ -430,29 +444,47 @@ export default {
                 return;
               }
 
-              const latest = rawReadings[0];
-              document.getElementById('lastUpdatedDate').innerText = formatLocalDate(latest.timestamp);
+              // Locate the most recent reading that was successful (0-100%)
+              const lastGoodReading = rawReadings.find(isValidReading);
 
-              const latestVal = evaluateFormula(latest.distance, currentFormula);
-              const batteryPct = evaluateBattery(latest.battery, currentBattFormula);
-              const rawBatt = latest.battery ? Number(latest.battery).toFixed(2) : '0.00';
+              if (lastGoodReading) {
+                const goodDate = new Date(lastGoodReading.timestamp.replace(' ', 'T') + 'Z');
+                const now = new Date();
+                const diffDays = Math.floor((now - goodDate) / (1000 * 60 * 60 * 24));
 
-              // Show Error State if percentage is out of logical bounds (0-100)
-              if (latestVal < 0 || latestVal > 100) {
-                document.getElementById('latestValCard').innerHTML = '<span class="text-error">' + t('errorBounds') + '</span> <span class="text-sm opacity-60 font-normal text-base-content">(' + latest.distance + 'cm)</span>';
+                let dateString = formatLocalDate(lastGoodReading.timestamp);
+
+                // Append clean, localized relative time if the reading is old
+                if (diffDays === 1) {
+                  dateString += ' <span class="text-error font-bold ml-2">' + t('oneDayAgo') + '</span>';
+                } else if (diffDays > 1) {
+                  dateString += ' <span class="text-error font-bold ml-2">' + t('daysAgo').replace('{days}', diffDays) + '</span>';
+                }
+                document.getElementById('lastUpdatedDate').innerHTML = dateString;
+
+                // Bind the top cards to the last successful measurement
+                const latestVal = evaluateFormula(lastGoodReading.distance, currentFormula);
+                const batteryPct = evaluateBattery(lastGoodReading.battery, currentBattFormula);
+                const rawBatt = lastGoodReading.battery ? Number(lastGoodReading.battery).toFixed(2) : '0.00';
+
+                document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + lastGoodReading.distance + 'cm)</span>';
+                document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + rawBatt + 'V)</span>';
+
               } else {
-                document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + latest.distance + 'cm)</span>';
+                // Failsafe: The database has readings, but none of them are valid
+                document.getElementById('lastUpdatedDate').innerText = t('noReadings');
+                document.getElementById('latestValCard').innerHTML = '<span class="text-error">' + t('errorBounds') + '</span>';
+                document.getElementById('latestBatteryCard').innerText = 'N/A';
               }
 
-              document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + rawBatt + 'V)</span>';
-
+              // Populate the history table (we intentionally show all readings here, including errors, for transparency)
               const tbody = document.getElementById('logsTableBody');
               tbody.innerHTML = rawReadings.map(function(r) {
                 const rBatt = r.battery ? Number(r.battery).toFixed(2) : '0.00';
                 const v = evaluateFormula(r.distance, currentFormula);
 
                 // Show Error State in table if percentage is out of bounds
-                const valDisplay = (v < 0 || v > 100)
+                const valDisplay = !isValidReading(r)
                   ? '<span class="text-error">' + t('errorBounds') + '</span>'
                   : v + '%';
 
@@ -465,7 +497,7 @@ export default {
               }).join('');
 
               updateChart();
-              updatePrediction();
+              updatePrediction(lastGoodReading);
 
             } catch (error) {
               console.error("Dashboard rendering error:", error);
@@ -480,10 +512,7 @@ export default {
             if (!window.Chart) return;
 
             // Map standard coordinates for time-scaled X-axis and filter out-of-bounds readings
-            const chartData = [...rawReadings].reverse().filter(function(r) {
-              const v = evaluateFormula(r.distance, currentFormula);
-              return v >= 0 && v <= 100;
-            }).map(function(r) {
+            const chartData = [...rawReadings].reverse().filter(isValidReading).map(function(r) {
               return {
                 x: new Date(r.timestamp.replace(' ', 'T') + 'Z'),
                 y: evaluateFormula(r.distance, currentFormula)
@@ -525,21 +554,16 @@ export default {
             });
           }
 
-          function updatePrediction() {
+          function updatePrediction(lastGoodReading) {
             const el = document.getElementById('timeToFull');
             if (!el) return;
 
-            if (rawReadings.length < 2) {
+            if (rawReadings.length < 2 || !lastGoodReading) {
               el.innerText = t('notEnoughData');
               return;
             }
 
-            // Halt prediction if sensor is blocked or out of logical bounds
-            const latestVal = evaluateFormula(rawReadings[0].distance, currentFormula);
-            if (latestVal < 0 || latestVal > 100) {
-              el.innerText = t('errorBounds');
-              return;
-            }
+            const latestVal = evaluateFormula(lastGoodReading.distance, currentFormula);
 
             if (latestVal >= 100) {
               el.innerText = t('tankFull');
@@ -553,12 +577,11 @@ export default {
               const current = rawReadings[i];
               const prev = rawReadings[i + 1];
 
+              // Skip calculation points if either reading had an out of bounds error
+              if (!isValidReading(current) || !isValidReading(prev)) continue;
+
               const currentV = evaluateFormula(current.distance, currentFormula);
               const prevV = evaluateFormula(prev.distance, currentFormula);
-
-              // Skip calculation points if either reading had an out of bounds error
-              if(currentV < 0 || currentV > 100 || prevV < 0 || prevV > 100) continue;
-
               const diffVal = currentV - prevV;
 
               if (diffVal > 0) {
@@ -579,6 +602,7 @@ export default {
             }
 
             const avgDailyIncrease = totalIncrease / daysFilling;
+            // Prediction now logically uses the last successful reading instead of the raw top reading
             const remaining = 100 - latestVal;
             const daysToFull = Math.ceil(remaining / avgDailyIncrease);
 
