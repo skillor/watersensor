@@ -45,7 +45,7 @@ export default {
       try {
         const body = await request.json();
 
-        // 50-second cooldown guardrail
+        // Check 50-second rate limit
         const lastEntry = await env.DB.prepare(
           'SELECT timestamp FROM readings ORDER BY timestamp DESC LIMIT 1'
         ).first();
@@ -62,7 +62,7 @@ export default {
           'INSERT INTO readings (distance, battery) VALUES (?, ?)'
         ).bind(body.distance, body.battery).run();
 
-        // 2-year retention guardrail
+        // Enforce 2-year data retention
         await env.DB.prepare(`
           DELETE FROM readings
           WHERE timestamp < datetime('now', '-2 years')
@@ -151,7 +151,6 @@ export default {
         <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
         <style>
-          /* Force dark zebra stripes and hover effect inside base-200 cards */
           .custom-zebra tbody tr:nth-child(even) td {
             background-color: oklch(var(--b3)) !important;
           }
@@ -216,7 +215,7 @@ export default {
             </div>
           </div>
 
-          <!-- ADMIN SETTINGS PANEL -->
+          <!-- Admin Settings Panel -->
           ${!isPublic ? `
           <div class="card bg-base-200 shadow-sm border border-base-300">
             <div class="card-body p-5">
@@ -282,7 +281,7 @@ export default {
           let currentFormula = ${JSON.stringify(cfg.water_formula)};
           let currentBattFormula = ${JSON.stringify(cfg.battery_formula)};
 
-          // --- i18n DICTIONARY ---
+          // Localization dictionary
           const dict = {
             en: {
               title: "Water Tank Monitor",
@@ -313,7 +312,8 @@ export default {
               daysUntilFull: "days until full",
               errorBounds: "Error",
               oneDayAgo: "(1 day ago)",
-              daysAgo: "({days} days ago)"
+              daysAgo: "({days} days ago)",
+              predicted: "Predicted"
             },
             de: {
               title: "Wassertank Monitor",
@@ -344,11 +344,12 @@ export default {
               daysUntilFull: "Tage bis voll",
               errorBounds: "Fehler",
               oneDayAgo: "(vor 1 Tag)",
-              daysAgo: "(vor {days} Tagen)"
+              daysAgo: "(vor {days} Tagen)",
+              predicted: "Geschätzt"
             }
           };
 
-          // --- LANGUAGE STATE MANAGEMENT ---
+          // Language state setup
           let currentLang = 'en';
           try {
             const saved = localStorage.getItem('appLang');
@@ -387,7 +388,6 @@ export default {
             document.documentElement.lang = currentLang;
           }
 
-          // Format UTC string to local browser timezone WITHOUT seconds
           function formatLocalDate(utcString) {
             if (!utcString) return '';
             const dateObj = new Date(utcString.replace(' ', 'T') + 'Z');
@@ -398,43 +398,70 @@ export default {
             });
           }
 
-          // Evaluates custom water formula safely
+          // Evaluate water formula safely. Returns -999 on error or invalid result.
           function evaluateFormula(distance, formulaString) {
             const d = parseFloat(distance);
-            if (isNaN(d)) return 0;
+            if (isNaN(d)) return -999;
             let formula = formulaString && formulaString.trim().length > 0 ? formulaString : '(-0.5 * distance) + 150';
             formula = formula.replace(new RegExp(String.fromCharCode(160), 'g'), ' ').trim();
             try {
               const evalFn = new Function('distance', 'return Number(' + formula + ');');
               let result = evalFn(d);
-              if (isNaN(result)) return 0;
+              if (isNaN(result) || !isFinite(result)) return -999;
               return Math.round(result * 10) / 10;
-            } catch (e) { return 0; }
+            } catch (e) { return -999; }
           }
 
-          // Evaluates custom battery formula safely
+          // Evaluate battery formula safely. Returns -999 on error or invalid result.
           function evaluateBattery(voltage, formulaString) {
             const b = parseFloat(voltage);
-            if (isNaN(b)) return 0;
+            if (isNaN(b)) return -999;
             let formula = formulaString && formulaString.trim().length > 0 ? formulaString : '(100 * battery) - 360';
             formula = formula.replace(new RegExp(String.fromCharCode(160), 'g'), ' ').trim();
             try {
               const evalFn = new Function('battery', 'return Number(' + formula + ');');
               let result = evalFn(b);
-              if (isNaN(result)) return 0;
+              if (isNaN(result) || !isFinite(result)) return -999;
               return Math.min(Math.max(Math.round(result), 0), 100);
-            } catch (e) { return 0; }
+            } catch (e) { return -999; }
           }
 
-          // Centralized logic to determine if a reading falls inside physical & logical bounds
           function isValidReading(r) {
             const v = evaluateFormula(r.distance, currentFormula);
             return v >= 0 && v <= 100;
           }
 
+          // Calculate average daily percentage growth from historical data
+          function getDailyGrowthRate() {
+            let totalIncrease = 0;
+            let daysFilling = 0;
+
+            for (let i = 0; i < rawReadings.length - 1; i++) {
+              const current = rawReadings[i];
+              const prev = rawReadings[i + 1];
+
+              if (!isValidReading(current) || !isValidReading(prev)) continue;
+
+              const currentV = evaluateFormula(current.distance, currentFormula);
+              const prevV = evaluateFormula(prev.distance, currentFormula);
+              const diffVal = currentV - prevV;
+
+              if (diffVal > 0) {
+                const t1 = new Date(current.timestamp.replace(' ', 'T') + 'Z').getTime();
+                const t2 = new Date(prev.timestamp.replace(' ', 'T') + 'Z').getTime();
+                const diffDays = (t1 - t2) / (1000 * 60 * 60 * 24);
+
+                if (diffDays > 0 && diffDays < 30) {
+                  totalIncrease += diffVal;
+                  daysFilling += diffDays;
+                }
+              }
+            }
+            return daysFilling > 0 ? (totalIncrease / daysFilling) : 0;
+          }
+
           function renderDashboardUI() {
             try {
-              // Handle empty database entirely
               if (!rawReadings || rawReadings.length === 0) {
                 document.getElementById('lastUpdatedDate').innerText = 'N/A';
                 document.getElementById('latestValCard').innerText = 'N/A';
@@ -444,46 +471,60 @@ export default {
                 return;
               }
 
-              // Locate the most recent reading that was successful (0-100%)
+              // Get the most recent valid reading to serve as the baseline
               const lastGoodReading = rawReadings.find(isValidReading);
 
               if (lastGoodReading) {
                 const goodDate = new Date(lastGoodReading.timestamp.replace(' ', 'T') + 'Z');
-                const now = new Date();
-                const diffDays = Math.floor((now - goodDate) / (1000 * 60 * 60 * 24));
+                const diffDays = (Date.now() - goodDate.getTime()) / (1000 * 60 * 60 * 24);
 
                 let dateString = formatLocalDate(lastGoodReading.timestamp);
 
-                // Append clean, localized relative time if the reading is old
-                if (diffDays === 1) {
-                  dateString += ' <span class="text-error font-bold ml-2">' + t('oneDayAgo') + '</span>';
-                } else if (diffDays > 1) {
-                  dateString += ' <span class="text-error font-bold ml-2">' + t('daysAgo').replace('{days}', diffDays) + '</span>';
+                if (diffDays >= 1) {
+                  const roundedDays = Math.round(diffDays);
+                  const timeText = roundedDays === 1 ? t('oneDayAgo') : t('daysAgo').replace('{days}', roundedDays);
+                  dateString += ' <span class="text-error font-bold ml-2">' + timeText + '</span>';
                 }
+
                 document.getElementById('lastUpdatedDate').innerHTML = dateString;
 
-                // Bind the top cards to the last successful measurement
-                const latestVal = evaluateFormula(lastGoodReading.distance, currentFormula);
+                const baseVal = evaluateFormula(lastGoodReading.distance, currentFormula);
                 const batteryPct = evaluateBattery(lastGoodReading.battery, currentBattFormula);
                 const rawBatt = lastGoodReading.battery ? Number(lastGoodReading.battery).toFixed(2) : '0.00';
+                const growthRate = getDailyGrowthRate();
 
-                document.getElementById('latestValCard').innerHTML = latestVal + '% <span class="text-sm opacity-60 font-normal">(' + lastGoodReading.distance + 'cm)</span>';
+                let displayVal = baseVal;
+                let isPredicted = false;
+
+                // Calculate projected value based on historical growth if the last valid reading is older than 24h
+                if (diffDays >= 1 && growthRate > 0) {
+                  displayVal = Math.min(100, Math.round(baseVal + (growthRate * diffDays)));
+                  isPredicted = true;
+                }
+
+                if (isPredicted) {
+                   document.getElementById('latestValCard').innerHTML = displayVal + '% <span class="text-sm font-normal text-warning ml-1">(' + t('predicted') + ')</span>';
+                } else {
+                   document.getElementById('latestValCard').innerHTML = displayVal + '% <span class="text-sm opacity-60 font-normal">(' + lastGoodReading.distance + 'cm)</span>';
+                }
+
                 document.getElementById('latestBatteryCard').innerHTML = batteryPct + '% <span class="text-sm opacity-60 font-normal">(' + rawBatt + 'V)</span>';
 
+                updatePrediction(displayVal, growthRate);
+
               } else {
-                // Failsafe: The database has readings, but none of them are valid
+                // Failsafe for when there are readings but none are valid
                 document.getElementById('lastUpdatedDate').innerText = t('noReadings');
                 document.getElementById('latestValCard').innerHTML = '<span class="text-error">' + t('errorBounds') + '</span>';
                 document.getElementById('latestBatteryCard').innerText = 'N/A';
               }
 
-              // Populate the history table (we intentionally show all readings here, including errors, for transparency)
+              // Render history table including valid and invalid readings
               const tbody = document.getElementById('logsTableBody');
               tbody.innerHTML = rawReadings.map(function(r) {
                 const rBatt = r.battery ? Number(r.battery).toFixed(2) : '0.00';
                 const v = evaluateFormula(r.distance, currentFormula);
 
-                // Show Error State in table if percentage is out of bounds
                 const valDisplay = !isValidReading(r)
                   ? '<span class="text-error">' + t('errorBounds') + '</span>'
                   : v + '%';
@@ -497,7 +538,6 @@ export default {
               }).join('');
 
               updateChart();
-              updatePrediction(lastGoodReading);
 
             } catch (error) {
               console.error("Dashboard rendering error:", error);
@@ -511,7 +551,6 @@ export default {
           function updateChart() {
             if (!window.Chart) return;
 
-            // Map standard coordinates for time-scaled X-axis and filter out-of-bounds readings
             const chartData = [...rawReadings].reverse().filter(isValidReading).map(function(r) {
               return {
                 x: new Date(r.timestamp.replace(' ', 'T') + 'Z'),
@@ -554,57 +593,28 @@ export default {
             });
           }
 
-          function updatePrediction(lastGoodReading) {
+          // Calculate days to full based on current level and growth rate
+          function updatePrediction(currentLevel, growthRate) {
             const el = document.getElementById('timeToFull');
             if (!el) return;
 
-            if (rawReadings.length < 2 || !lastGoodReading) {
+            if (rawReadings.length < 2 || currentLevel == null) {
               el.innerText = t('notEnoughData');
               return;
             }
 
-            const latestVal = evaluateFormula(lastGoodReading.distance, currentFormula);
-
-            if (latestVal >= 100) {
+            if (currentLevel >= 100) {
               el.innerText = t('tankFull');
               return;
             }
 
-            let totalIncrease = 0;
-            let daysFilling = 0;
-
-            for (let i = 0; i < rawReadings.length - 1; i++) {
-              const current = rawReadings[i];
-              const prev = rawReadings[i + 1];
-
-              // Skip calculation points if either reading had an out of bounds error
-              if (!isValidReading(current) || !isValidReading(prev)) continue;
-
-              const currentV = evaluateFormula(current.distance, currentFormula);
-              const prevV = evaluateFormula(prev.distance, currentFormula);
-              const diffVal = currentV - prevV;
-
-              if (diffVal > 0) {
-                const t1 = new Date(current.timestamp.replace(' ', 'T') + 'Z').getTime();
-                const t2 = new Date(prev.timestamp.replace(' ', 'T') + 'Z').getTime();
-                const diffDays = (t1 - t2) / (1000 * 60 * 60 * 24);
-
-                if (diffDays > 0 && diffDays < 30) {
-                  totalIncrease += diffVal;
-                  daysFilling += diffDays;
-                }
-              }
-            }
-
-            if (totalIncrease <= 0 || daysFilling <= 0) {
+            if (growthRate <= 0) {
               el.innerText = t('notFilling');
               return;
             }
 
-            const avgDailyIncrease = totalIncrease / daysFilling;
-            // Prediction now logically uses the last successful reading instead of the raw top reading
-            const remaining = 100 - latestVal;
-            const daysToFull = Math.ceil(remaining / avgDailyIncrease);
+            const remaining = 100 - currentLevel;
+            const daysToFull = Math.ceil(remaining / growthRate);
 
             el.innerText = "~ " + daysToFull + " " + t('daysUntilFull');
           }
@@ -613,7 +623,7 @@ export default {
           applyTranslations();
           renderDashboardUI();
 
-          // Handle Settings Saves
+          // Handle settings form submission
           async function saveSettings(e) {
             e.preventDefault();
             const newFormula = document.getElementById('waterFormula').value;
